@@ -104,13 +104,13 @@ func WithZapCaller(enabled bool) InitOption {
 	}
 }
 
-// WithPanicHappened
-func WithPanicHappened(fn func(time time.Time, logger string, message string, caller string)) InitOption {
+// WithZapPanicHappened
+func WithZapPanicHappened(fn func(time time.Time, logger string, message string, caller string)) InitOption {
 	return func(l *logkit) { l.zapCfg.panicFn = fn }
 }
 
-// WithFatalHappened
-func WithFatalHappened(fn func(time time.Time, logger string, message string, caller string)) InitOption {
+// WithZapFatalHappened
+func WithZapFatalHappened(fn func(time time.Time, logger string, message string, caller string)) InitOption {
 	return func(l *logkit) { l.zapCfg.fatalFn = fn }
 }
 
