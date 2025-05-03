@@ -7,14 +7,13 @@ import (
 
 	"github.com/nexitf/logkit/errors"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 const (
 	DefaultErrorFieldName = "error"
 )
 
-type Level = zapcore.Level
+type Level int8
 
 const (
 	DebugLevel Level = iota - 1
@@ -73,17 +72,17 @@ func WithZapLoggerName(name string) InitOption {
 func WithZapLevel(level Level) InitOption {
 	return func(l *logkit) {
 		switch level {
-		case LevelDebug:
+		case DebugLevel:
 			l.zapCfg.level = zap.DebugLevel
-		case LevelInfo:
+		case InfoLevel:
 			l.zapCfg.level = zap.InfoLevel
-		case LevelWarn:
+		case WarnLevel:
 			l.zapCfg.level = zap.WarnLevel
-		case LevelError:
+		case ErrorLevel:
 			l.zapCfg.level = zap.ErrorLevel
-		case LevelPanic:
+		case PanicLevel:
 			l.zapCfg.level = zap.PanicLevel
-		case LevelFatal:
+		case FatalLevel:
 			l.zapCfg.level = zap.FatalLevel
 		}
 	}

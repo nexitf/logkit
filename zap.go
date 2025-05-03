@@ -12,20 +12,11 @@ const (
 	defaultTimeLayout = "2006-01-02 15:04:05.000000 -0700 MST"
 )
 
-const (
-	LevelDebug = zapcore.DebugLevel
-	LevelInfo  = zapcore.InfoLevel
-	LevelWarn  = zapcore.WarnLevel
-	LevelError = zapcore.ErrorLevel
-	LevelPanic = zapcore.PanicLevel
-	LevelFatal = zapcore.FatalLevel
-)
-
 var (
 	defaultConfig = zapConfig{
 		level:   zapcore.DebugLevel,
 		writer:  NewConsoleWriter(),
-		encoder: NewJSONEncoder,
+		encoder: NewConsoleEncoder,
 		encoderOpts: []EncoderOption{
 			withEncoderTimeLayout(time.Local, defaultTimeLayout),
 			withEncoderFieldKey(EncoderFieldKeyFunction, ""), // Hide function field
