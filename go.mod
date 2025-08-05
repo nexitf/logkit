@@ -1,4 +1,4 @@
-module github.com/nexitf/logkit
+module github.com/nexitf/logger
 
 go 1.18
 

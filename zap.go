@@ -1,4 +1,4 @@
-package logkit
+package logger
 
 import (
 	"io"

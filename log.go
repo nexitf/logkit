@@ -1,16 +1,12 @@
-package logkit
+package logger
 
 import (
 	"context"
 	"io"
 	"time"
 
-	"github.com/nexitf/logkit/errors"
+	"github.com/nexitf/logger/field"
 	"go.uber.org/zap"
-)
-
-const (
-	DefaultErrorFieldName = "error"
 )
 
 type Level int8
@@ -24,12 +20,7 @@ const (
 	FatalLevel
 )
 
-type FieldOption func(func(key string, value any))
-
-// Field
-func Field(key string, value any) FieldOption {
-	return func(fn func(string, any)) { fn(key, value) }
-}
+type FieldOption = field.FieldOption
 
 type LogHandler interface {
 	Debug(message string, fields map[string]any, keys []string)
@@ -41,36 +32,32 @@ type LogHandler interface {
 	Flush() (err error)
 }
 
-type InitOption func(*logkit)
+type logInstance struct{}
+
+var (
+	Instance = logInstance{}
+)
+
+type InitOption func(*logger)
 
 // WithCustomHandler
 func WithCustomHandler(handler LogHandler) InitOption {
-	return func(l *logkit) { l.handler = handler }
-}
-
-// WithSeparateErrorField
-func WithSeparateErrorField(name string) InitOption {
-	return func(l *logkit) { l.errorName = name }
+	return func(l *logger) { l.handler = handler }
 }
 
 // WithContextKeys
 func WithContextKeys(keys ...string) InitOption {
-	return func(l *logkit) { l.ctxKeys = keys }
-}
-
-// WithNolog
-func WithNolog() InitOption {
-	return func(l *logkit) { l.nolog = true }
+	return func(l *logger) { l.ctxKeys = keys }
 }
 
 // WithZapLoggerName
 func WithZapLoggerName(name string) InitOption {
-	return func(l *logkit) { l.zapCfg.name = name }
+	return func(l *logger) { l.zapCfg.name = name }
 }
 
 // WithZapLevel sets a level.
 func WithZapLevel(level Level) InitOption {
-	return func(l *logkit) {
+	return func(l *logger) {
 		switch level {
 		case DebugLevel:
 			l.zapCfg.level = zap.DebugLevel
@@ -90,7 +77,7 @@ func WithZapLevel(level Level) InitOption {
 
 // WithZapWriter sets a log writer.
 func WithZapWriter(w io.Writer) InitOption {
-	return func(l *logkit) {
+	return func(l *logger) {
 		if w != nil {
 			l.zapCfg.writer = w
 		}
@@ -99,59 +86,57 @@ func WithZapWriter(w io.Writer) InitOption {
 
 // WithZapCaller sets caller in log.
 func WithZapCaller(enabled bool) InitOption {
-	return func(l *logkit) {
+	return func(l *logger) {
 		l.zapCfg.zloggerOpts = append(l.zapCfg.zloggerOpts, zap.WithCaller(enabled), zap.AddCallerSkip(3))
 	}
 }
 
 // WithZapPanicHappened
 func WithZapPanicHappened(fn func(time time.Time, logger string, message string, caller string)) InitOption {
-	return func(l *logkit) { l.zapCfg.panicFn = fn }
+	return func(l *logger) { l.zapCfg.panicFn = fn }
 }
 
 // WithZapFatalHappened
 func WithZapFatalHappened(fn func(time time.Time, logger string, message string, caller string)) InitOption {
-	return func(l *logkit) { l.zapCfg.fatalFn = fn }
+	return func(l *logger) { l.zapCfg.fatalFn = fn }
 }
 
 // WithZapEncoder sets a function to new an encoder.
 func WithZapEncoder(fun Encoder) InitOption {
-	return func(l *logkit) {
+	return func(l *logger) {
 		l.zapCfg.encoder = fun
 	}
 }
 
 // WithZapEncoderFieldKey sets a key name with specific key.
 func WithZapEncoderFieldKey(key, name string) InitOption {
-	return func(l *logkit) {
+	return func(l *logger) {
 		l.zapCfg.encoderOpts = append(l.zapCfg.encoderOpts, withEncoderFieldKey(key, name))
 	}
 }
 
 // WithZapEncoderRemoveField removes the specified field.
 func WithZapEncoderRemoveField(key string) InitOption {
-	return func(l *logkit) {
+	return func(l *logger) {
 		l.zapCfg.encoderOpts = append(l.zapCfg.encoderOpts, withEncoderFieldKey(key, ""))
 	}
 }
 
 // WithZapEncoderTimeLayout sets a time encoder.
 func WithZapEncoderTimeLayout(loc *time.Location, layout string) InitOption {
-	return func(l *logkit) {
+	return func(l *logger) {
 		l.zapCfg.encoderOpts = append(l.zapCfg.encoderOpts, withEncoderTimeLayout(loc, layout))
 	}
 }
 
-type logkit struct {
-	handler   LogHandler
-	errorName string
-	nolog     bool
-	ctxKeys   []string
-	zapCfg    zapConfig
+type logger struct {
+	ctxKeys []string
+	handler LogHandler
+	zapCfg  zapConfig
 }
 
 var (
-	log logkit
+	log logger
 )
 
 // Init
@@ -162,7 +147,7 @@ func Init(opts ...InitOption) {
 		setOpt(&log)
 	}
 	// Option: handler
-	if log.handler == nil && !log.nolog {
+	if log.handler == nil {
 		log.handler = newZapHandler(&log.zapCfg)
 	}
 }
@@ -175,10 +160,10 @@ func Flush() (err error) {
 	return
 }
 
-func (l *logkit) Debug(message string, fields ...FieldOption) {
-	if l.haslog() {
+func (l *logger) Debug(message string, fields ...FieldOption) {
+	if h, ok := l.haslog(); ok {
 		fieldsMap, keys := l.toFieldsMap(fields...)
-		l.handler.Debug(message, fieldsMap, keys)
+		h.Debug(message, fieldsMap, keys)
 	}
 }
 
@@ -186,11 +171,11 @@ func Debug(message string, fields ...FieldOption) {
 	log.Debug(message, fields...)
 }
 
-func (l *logkit) DebugCtx(ctx context.Context, message string, fields ...FieldOption) {
-	if l.haslog() {
+func (l *logger) DebugCtx(ctx context.Context, message string, fields ...FieldOption) {
+	if h, ok := l.haslogCtx(ctx); ok {
 		fields = append(fields, l.withCtxKeys(ctx)...)
 		fieldsMap, keys := l.toFieldsMap(fields...)
-		l.handler.Debug(message, fieldsMap, keys)
+		h.Debug(message, fieldsMap, keys)
 	}
 }
 
@@ -198,10 +183,10 @@ func DebugCtx(ctx context.Context, message string, fields ...FieldOption) {
 	log.DebugCtx(ctx, message, fields...)
 }
 
-func (l *logkit) Info(message string, fields ...FieldOption) {
-	if l.haslog() {
+func (l *logger) Info(message string, fields ...FieldOption) {
+	if h, ok := l.haslog(); ok {
 		fieldsMap, keys := l.toFieldsMap(fields...)
-		l.handler.Info(message, fieldsMap, keys)
+		h.Info(message, fieldsMap, keys)
 	}
 }
 
@@ -209,11 +194,11 @@ func Info(message string, fields ...FieldOption) {
 	log.Info(message, fields...)
 }
 
-func (l *logkit) InfoCtx(ctx context.Context, message string, fields ...FieldOption) {
-	if l.haslog() {
+func (l *logger) InfoCtx(ctx context.Context, message string, fields ...FieldOption) {
+	if h, ok := l.haslogCtx(ctx); ok {
 		fields = append(fields, l.withCtxKeys(ctx)...)
 		fieldsMap, keys := l.toFieldsMap(fields...)
-		l.handler.Info(message, fieldsMap, keys)
+		h.Info(message, fieldsMap, keys)
 	}
 }
 
@@ -221,10 +206,10 @@ func InfoCtx(ctx context.Context, message string, fields ...FieldOption) {
 	log.InfoCtx(ctx, message, fields...)
 }
 
-func (l *logkit) Warn(message string, fields ...FieldOption) {
-	if l.haslog() {
+func (l *logger) Warn(message string, fields ...FieldOption) {
+	if h, ok := l.haslog(); ok {
 		fieldsMap, keys := l.toFieldsMap(fields...)
-		l.handler.Warn(message, fieldsMap, keys)
+		h.Warn(message, fieldsMap, keys)
 	}
 }
 
@@ -232,11 +217,11 @@ func Warn(message string, fields ...FieldOption) {
 	log.Warn(message, fields...)
 }
 
-func (l *logkit) WarnCtx(ctx context.Context, message string, fields ...FieldOption) {
-	if l.haslog() {
+func (l *logger) WarnCtx(ctx context.Context, message string, fields ...FieldOption) {
+	if h, ok := l.haslogCtx(ctx); ok {
 		fields = append(fields, l.withCtxKeys(ctx)...)
 		fieldsMap, keys := l.toFieldsMap(fields...)
-		l.handler.Warn(message, fieldsMap, keys)
+		h.Warn(message, fieldsMap, keys)
 	}
 }
 
@@ -244,10 +229,10 @@ func WarnCtx(ctx context.Context, message string, fields ...FieldOption) {
 	log.WarnCtx(ctx, message, fields...)
 }
 
-func (l *logkit) Error(message string, fields ...FieldOption) {
-	if l.haslog() {
+func (l *logger) Error(message string, fields ...FieldOption) {
+	if h, ok := l.haslog(); ok {
 		fieldsMap, keys := l.toFieldsMap(fields...)
-		l.handler.Error(message, fieldsMap, keys)
+		h.Error(message, fieldsMap, keys)
 	}
 }
 
@@ -255,27 +240,11 @@ func Error(message string, fields ...FieldOption) {
 	log.Error(message, fields...)
 }
 
-func (l *logkit) ErrorWrap(err error, message string, fields ...FieldOption) {
-	if l.haslog() {
-		if l.errorName != "" {
-			fields = append(fields, Field(l.errorName, err))
-		} else {
-			message = errors.Wrap(err, message).Error()
-		}
-		fieldsMap, keys := l.toFieldsMap(fields...)
-		l.handler.Error(message, fieldsMap, keys)
-	}
-}
-
-func ErrorWrap(err error, message string, fields ...FieldOption) {
-	log.ErrorWrap(err, message, fields...)
-}
-
-func (l *logkit) ErrorCtx(ctx context.Context, message string, fields ...FieldOption) {
-	if l.haslog() {
+func (l *logger) ErrorCtx(ctx context.Context, message string, fields ...FieldOption) {
+	if h, ok := l.haslogCtx(ctx); ok {
 		fields = append(fields, l.withCtxKeys(ctx)...)
 		fieldsMap, keys := l.toFieldsMap(fields...)
-		l.handler.Error(message, fieldsMap, keys)
+		h.Error(message, fieldsMap, keys)
 	}
 }
 
@@ -283,27 +252,10 @@ func ErrorCtx(ctx context.Context, message string, fields ...FieldOption) {
 	log.ErrorCtx(ctx, message, fields...)
 }
 
-func (l *logkit) ErrorWrapCtx(ctx context.Context, err error, message string, fields ...FieldOption) {
-	if l.haslog() {
-		if l.errorName != "" {
-			fields = append(fields, Field(l.errorName, err))
-		} else {
-			message = errors.Wrap(err, message).Error()
-		}
-		fields = append(fields, l.withCtxKeys(ctx)...)
+func (l *logger) Panic(message string, fields ...FieldOption) {
+	if h, ok := l.haslog(); ok {
 		fieldsMap, keys := l.toFieldsMap(fields...)
-		l.handler.Error(message, fieldsMap, keys)
-	}
-}
-
-func ErrorWrapCtx(ctx context.Context, err error, message string, fields ...FieldOption) {
-	log.ErrorWrapCtx(ctx, err, message, fields...)
-}
-
-func (l *logkit) Panic(message string, fields ...FieldOption) {
-	if l.haslog() {
-		fieldsMap, keys := l.toFieldsMap(fields...)
-		l.handler.Panic(message, fieldsMap, keys)
+		h.Panic(message, fieldsMap, keys)
 	}
 }
 
@@ -311,27 +263,11 @@ func Panic(message string, fields ...FieldOption) {
 	log.Panic(message, fields...)
 }
 
-func (l *logkit) PanicWrap(err error, message string, fields ...FieldOption) {
-	if l.haslog() {
-		if l.errorName != "" {
-			fields = append(fields, Field(l.errorName, err))
-		} else {
-			message = errors.Wrap(err, message).Error()
-		}
-		fieldsMap, keys := l.toFieldsMap(fields...)
-		l.handler.Panic(message, fieldsMap, keys)
-	}
-}
-
-func PanicWrap(err error, message string, fields ...FieldOption) {
-	log.PanicWrap(err, message, fields...)
-}
-
-func (l *logkit) PanicCtx(ctx context.Context, message string, fields ...FieldOption) {
-	if l.haslog() {
+func (l *logger) PanicCtx(ctx context.Context, message string, fields ...FieldOption) {
+	if h, ok := l.haslogCtx(ctx); ok {
 		fields = append(fields, l.withCtxKeys(ctx)...)
 		fieldsMap, keys := l.toFieldsMap(fields...)
-		l.handler.Panic(message, fieldsMap, keys)
+		h.Panic(message, fieldsMap, keys)
 	}
 }
 
@@ -339,27 +275,10 @@ func PanicCtx(ctx context.Context, message string, fields ...FieldOption) {
 	log.PanicCtx(ctx, message, fields...)
 }
 
-func (l *logkit) PanicWrapCtx(ctx context.Context, err error, message string, fields ...FieldOption) {
-	if l.haslog() {
-		if l.errorName != "" {
-			fields = append(fields, Field(l.errorName, err))
-		} else {
-			message = errors.Wrap(err, message).Error()
-		}
-		fields = append(fields, l.withCtxKeys(ctx)...)
+func (l *logger) Fatal(message string, fields ...FieldOption) {
+	if h, ok := l.haslog(); ok {
 		fieldsMap, keys := l.toFieldsMap(fields...)
-		l.handler.Panic(message, fieldsMap, keys)
-	}
-}
-
-func PanicWrapCtx(ctx context.Context, err error, message string, fields ...FieldOption) {
-	log.PanicWrapCtx(ctx, err, message, fields...)
-}
-
-func (l *logkit) Fatal(message string, fields ...FieldOption) {
-	if l.haslog() {
-		fieldsMap, keys := l.toFieldsMap(fields...)
-		l.handler.Fatal(message, fieldsMap, keys)
+		h.Fatal(message, fieldsMap, keys)
 	}
 }
 
@@ -367,27 +286,11 @@ func Fatal(message string, fields ...FieldOption) {
 	log.Fatal(message, fields...)
 }
 
-func (l *logkit) FatalWrap(err error, message string, fields ...FieldOption) {
-	if l.haslog() {
-		if l.errorName != "" {
-			fields = append(fields, Field(l.errorName, err))
-		} else {
-			message = errors.Wrap(err, message).Error()
-		}
-		fieldsMap, keys := l.toFieldsMap(fields...)
-		l.handler.Fatal(message, fieldsMap, keys)
-	}
-}
-
-func FatalWrap(err error, message string, fields ...FieldOption) {
-	log.FatalWrap(err, message, fields...)
-}
-
-func (l *logkit) FatalCtx(ctx context.Context, message string, fields ...FieldOption) {
-	if l.haslog() {
+func (l *logger) FatalCtx(ctx context.Context, message string, fields ...FieldOption) {
+	if h, ok := l.haslogCtx(ctx); ok {
 		fields = append(fields, l.withCtxKeys(ctx)...)
 		fieldsMap, keys := l.toFieldsMap(fields...)
-		l.handler.Fatal(message, fieldsMap, keys)
+		h.Fatal(message, fieldsMap, keys)
 	}
 }
 
@@ -395,30 +298,29 @@ func FatalCtx(ctx context.Context, message string, fields ...FieldOption) {
 	log.FatalCtx(ctx, message, fields...)
 }
 
-func (l *logkit) FatalWrapCtx(ctx context.Context, err error, message string, fields ...FieldOption) {
-	if l.haslog() {
-		if l.errorName != "" {
-			fields = append(fields, Field(l.errorName, err))
-		} else {
-			message = errors.Wrap(err, message).Error()
-		}
-		fields = append(fields, l.withCtxKeys(ctx)...)
-		fieldsMap, keys := l.toFieldsMap(fields...)
-		l.handler.Fatal(message, fieldsMap, keys)
-	}
-}
-
-func FatalWrapCtx(ctx context.Context, err error, message string, fields ...FieldOption) {
-	log.FatalWrapCtx(ctx, err, message, fields...)
-}
-
 // haslog
-func (l *logkit) haslog() bool {
-	return l.handler != nil
+func (l *logger) haslog() (LogHandler, bool) {
+	return l.handler, l.handler != nil
+}
+
+// haslogCtx
+func (l *logger) haslogCtx(ctx context.Context) (LogHandler, bool) {
+	log := ctx.Value(Instance)
+	if log != nil {
+		switch v := log.(type) {
+		// LogHandler implemention
+		case LogHandler:
+			return v, true
+		// zap logger
+		case *zap.Logger:
+			return &zapHandler{log: v}, true
+		}
+	}
+	return l.haslog()
 }
 
 // toFieldsMap
-func (l *logkit) toFieldsMap(opts ...FieldOption) (fields map[string]any, keys []string) {
+func (l *logger) toFieldsMap(opts ...FieldOption) (fields map[string]any, keys []string) {
 	fields = make(map[string]any)
 	// Collect keys
 	for _, fn := range opts {
@@ -431,7 +333,7 @@ func (l *logkit) toFieldsMap(opts ...FieldOption) (fields map[string]any, keys [
 }
 
 // withCtxKeys
-func (l *logkit) withCtxKeys(ctx context.Context) (fields []FieldOption) {
+func (l *logger) withCtxKeys(ctx context.Context) (fields []FieldOption) {
 	for _, key := range l.ctxKeys {
 		if value := ctx.Value(key); value != nil {
 			fields = append(fields, func(fn func(key string, value any)) { fn(key, value) })
